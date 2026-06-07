@@ -4,8 +4,8 @@ import Home from './pages/Home.js';
 import Table from './pages/Table.js';
 
 export default function App() {
-  const [mode, setMode] = useState<'home' | 'table'>('home');
-  useSocket(); // keep socket alive
+  const [mode, setMode] = useState<'home' | '1v1' | 'training'>('home');
+  useSocket();
 
   return (
     <div style={{
@@ -13,9 +13,9 @@ export default function App() {
       alignItems: 'center', justifyContent: 'center', fontFamily: 'sans-serif',
     }}>
       {mode === 'home' ? (
-        <Home onStart={() => setMode('table')} />
+        <Home onStart={(m) => setMode(m)} />
       ) : (
-        <Table onBack={() => setMode('home')} />
+        <Table mode={mode} onBack={() => setMode('home')} />
       )}
     </div>
   );

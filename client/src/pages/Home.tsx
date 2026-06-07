@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useGameStore } from '../stores/gameStore.js';
 
 interface Props {
-  onStart: (mode: '1v1') => void;
+  onStart: (mode: '1v1' | 'training') => void;
 }
 
 export default function Home({ onStart }: Props) {
@@ -91,7 +91,7 @@ export default function Home({ onStart }: Props) {
       <h1 style={{ fontSize: '2.4rem', textShadow: '0 2px 8px #000', marginBottom: 40 }}>♠ 沉浸式德州扑克 ♥</h1>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, maxWidth: 560, margin: '0 auto' }}>
         <Card icon="♠♥" label="1v1 对局" desc="单挑 AI 对手" onClick={() => onStart('1v1')} />
-        <Card icon="♣♦" label="陪练模式" desc="1 人 vs 5 AI" onClick={() => {}} />
+        <Card icon="♣♦" label="陪练模式" desc="1 人 vs 5 AI" onClick={() => onStart('training')} />
         <Card icon="📊" label="生涯档案" desc="查看战绩" onClick={() => {}} />
         <Card icon="💰" label="个人中心" desc={`游戏币: ${auth.gameTokens}`} onClick={() => {}} />
       </div>

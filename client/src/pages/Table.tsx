@@ -1,9 +1,11 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useGameStore } from '../stores/gameStore.js';
 import { useSocket } from '../hooks/useSocket.js';
+import { useTrainingSocket } from '../hooks/useTrainingSocket.js';
 import { playRaise, playAllIn } from '../game/sounds.js';
 
 interface Props {
+  mode: '1v1' | 'training';
   onBack: () => void;
 }
 
@@ -25,11 +27,13 @@ function cardColor(c: { suit: string }): string {
   return SUIT_COLOR[c.suit] ?? '#1a1a1a';
 }
 
-export default function Table({ onBack }: Props) {
+export default function Table({ mode, onBack }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const { state, connected, messages } = useGameStore();
-  const { send } = useSocket();
+  const { send: send1v1 } = useSocket();
+  const { send: sendTraining } = useTrainingSocket();
+  const send = mode === 'training' ? sendTraining : send1v1;
   const prevLen = useRef(0);
   const prevAllIn = useRef(false);
   const [animDeal, setAnimDeal] = useState(0);

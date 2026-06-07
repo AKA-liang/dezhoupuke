@@ -218,6 +218,65 @@ io.on('connection', (socket) => {
   });
 });
 
+// ---- Training Namespace ----
+const trainingNsp = io.of('/training');
+trainingNsp.on('connection', (socket) => {
+  console.log(`[Training] ${socket.id} connected`);
+  const engine = new MultiPokerEngine(6, 25, 50, 3000);
+  engine.reset();
+  const ais = [1, 2, 3, 4, 5].map(i => new AIPersona(
+    ['老张', '小李', '王姐', '老张', '小李'][i - 1]!,
+    { baseThinkTime: 0.8 + i * 0.1, noiseSigma: 0.1, bluffFrequency: 0.08 + i * 0.03, aggression: 0.8 + i * 0.1, color: '#888' },
+    i,
+  ));
+
+  function trainingState() {
+    const s = engine.getState();
+    s.players[0].holeCards = engine.players[0].holeCards;
+    return {
+      ...s,
+      players: s.players.map((p, i) => ({
+        ...p, name: i === 0 ? '你' : (ais[i - 1]?.name ?? 'AI'),
+        stress: i > 0 ? (ais[i - 1]?.stress ?? 0) : null,
+      })),
+    };
+  }
+
+  socket.emit('state', trainingState());
+
+  socket.on('action', (actionId: ActionId) => {
+    if (engine.isOver() || engine.currentPlayer !== 0) return;
+    engine.step(actionId);
+    socket.emit('state', trainingState());
+
+    let safety = 0;
+    while (!engine.isOver() && engine.currentPlayer !== 0 && safety++ < 30) {
+      const cur = engine.currentPlayer;
+      const ai = ais[cur - 1]!;
+      const s = engine.getState();
+      s.players[cur].holeCards = engine.players[cur].holeCards;
+      socket.emit('ai_thinking', { name: ai.name, stress: ai.stress, seat: cur });
+      const { actionId: aid } = decideAction(s, ai, cur, DEFAULT_STRESS_CFG);
+      engine.step(aid);
+      socket.emit('state', trainingState());
+    }
+
+    if (engine.isOver()) {
+      const payoffs = engine.getPayoffs();
+      socket.emit('hand_result', { winner: payoffs[0] > 0 ? 'player' : 'ai', pot: engine.totalPot(), payoffs });
+    }
+  });
+
+  socket.on('restart', () => {
+    engine.advanceDealer();
+    engine.reset();
+    for (const ai of ais) ai.resetStress();
+    socket.emit('state', trainingState());
+  });
+
+  socket.on('disconnect', () => console.log(`[Training] ${socket.id} left`));
+});
+
 // ---- Start ----
 http.listen(PORT, () => {
   console.log(`[Server] http://localhost:${PORT}`);

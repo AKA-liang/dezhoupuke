@@ -6,7 +6,8 @@ interface AuthState {
   username: string | null;
   gameTokens: number;
   points: number;
-  setAuth: (token: string, username: string, gameTokens: number, points: number) => void;
+  elo: number;
+  setAuth: (token: string, username: string, gameTokens: number, points: number, elo: number) => void;
   clearAuth: () => void;
 }
 
@@ -36,10 +37,11 @@ export const useGameStore = create<GameStore>((set) => ({
     username: null,
     gameTokens: 0,
     points: 0,
-    setAuth: (token, username, gameTokens, points) => {
+    elo: 1200,
+    setAuth: (token, username, gameTokens, points, elo) => {
       localStorage.setItem('token', token);
       set((prev) => ({
-        auth: { ...prev.auth, token, username, gameTokens, points },
+        auth: { ...prev.auth, token, username, gameTokens, points, elo },
       }));
     },
     setSessionTokens: (gameTokens) => {

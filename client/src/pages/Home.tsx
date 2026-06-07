@@ -27,7 +27,7 @@ export default function Home({ onStart }: Props) {
     if (!username || !password) return;
     try {
       const d = await apiPost('/api/auth/login', { username, password });
-      auth.setAuth(d.token, d.username, 0, 0);
+      auth.setAuth(d.token, d.username, d.gameTokens || 0, d.points || 0, d.elo || 1200);
       setShowLogin(false);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '登录失败');
@@ -97,7 +97,7 @@ export default function Home({ onStart }: Props) {
       </div>
       {auth.token && (
         <div style={{ marginTop: 24, color: '#999' }}>
-          {auth.username} | <button onClick={auth.clearAuth} style={{ background: 'none', border: 'none', color: '#e34234', cursor: 'pointer' }}>登出</button>
+          {auth.username} · {eloRank(auth.elo)} ({auth.elo}) · 游戏币: {auth.gameTokens} | <button onClick={auth.clearAuth} style={{ background: 'none', border: 'none', color: '#e34234', cursor: 'pointer' }}>登出</button>
         </div>
       )}
     </div>
@@ -130,4 +130,13 @@ function Card({ icon, label, desc, onClick }: { icon: string; label: string; des
 
 function btnStyle(bg: string): React.CSSProperties {
   return { padding: '10px 28px', borderRadius: 24, border: 'none', background: bg, color: '#fff', fontWeight: 'bold', cursor: 'pointer', fontSize: '0.95rem' };
+}
+
+function eloRank(elo: number): string {
+  if (elo < 1200) return '微额新手';
+  if (elo < 1400) return '低额学徒';
+  if (elo < 1600) return '中额行家';
+  if (elo < 1800) return '高额专家';
+  if (elo < 2000) return '无限注大师';
+  return '传奇鲨鱼';
 }

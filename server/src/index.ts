@@ -111,7 +111,8 @@ app.get('/api/auth/me', async (req, res) => {
     const payload = jwt.verify(token, JWT_SECRET) as { userId: string; username: string };
     const user = await DB.findUser(payload.username);
     if (!user) return res.status(404).json({ detail: '用户不存在' });
-    return res.json({ id: user.id, username: user.username, game_tokens: user.gameTokens, points: user.points });
+    const stats = await DB.getStats(user.id);
+    return res.json({ id: user.id, username: user.username, game_tokens: user.gameTokens, points: user.points, elo: stats.elo });
   } catch {
     return res.status(401).json({ detail: 'Token无效' });
   }

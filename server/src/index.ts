@@ -14,6 +14,7 @@ import { MultiPokerEngine } from './game/engine.js';
 import { AIPersona } from './ai/persona.js';
 import { decideAction } from './ai/agent.js';
 import { updateStress, endHandStressDecay, DEFAULT_STRESS_CFG } from './ai/stress.js';
+import { getTableTalk } from './ai/llm.js';
 import type { GameState, ActionId } from '@poker/shared/index.js';
 
 const app = express();
@@ -60,18 +61,8 @@ function adaptState(gs: GameSession): GameState {
   };
 }
 
-// ---- LLM Talk (fallback) ----
-const FALLBACK_TALK: Record<string, string[]> = {
-  fold: ['不玩了不玩了', '这把先撤', '溜了溜了'],
-  call: ['我跟', '陪你玩', '接了'],
-  raise: ['加！', '来点压力', '看牌说话'],
-  all_in: ['梭了！', '全下！', '拼了！'],
-};
-
-function randomTalk(action: string): string {
-  const talks = FALLBACK_TALK[action] ?? ['...'];
-  return talks[Math.floor(Math.random() * talks.length)] ?? '...';
-}
+// ---- LLM Talk ----
+const talkCache = new Map<string, string>();
 
 // ---- In-memory user store (MVP) ----
 const JWT_SECRET = 'dev-secret-change-me';
@@ -150,7 +141,20 @@ io.on('connection', (socket) => {
 
       const aname = { 0: 'fold', 1: 'call', 2: 'raise', 3: 'raise', 4: 'all_in' }[aid] ?? 'call';
       socket.emit('ai_action', { action: aname, text: `${gs.ai.name} ${aname}` });
-      socket.emit('table_talk', { text: randomTalk(aname), name: gs.ai.name });
+
+      // Fire-and-forget LLM talk
+      const potCtx = `底池${gs.engine.totalPot()} 阶段${gs.engine.stage}`;
+      (async () => {
+        const key = `${aname}_${potCtx}`;
+        let talk = talkCache.get(key);
+        if (!talk) {
+          talk = await getTableTalk(gs.ai.name, aname, potCtx);
+          if (talkCache.size > 100) talkCache.clear();
+          talkCache.set(key, talk);
+        }
+        socket.emit('table_talk', { text: talk, name: gs.ai.name });
+      })().catch(() => {});
+
       socket.emit('state', adaptState(gs));
     }
 

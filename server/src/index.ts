@@ -8,6 +8,8 @@
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 import { MultiPokerEngine } from './game/engine.js';
 import { AIPersona } from './ai/persona.js';
 import { decideAction } from './ai/agent.js';
@@ -71,8 +73,50 @@ function randomTalk(action: string): string {
   return talks[Math.floor(Math.random() * talks.length)] ?? '...';
 }
 
+// ---- In-memory user store (MVP) ----
+const JWT_SECRET = 'dev-secret-change-me';
+const users = new Map<string, { username: string; hash: string }>();
+
+app.use(express.json());
+
 // ---- API Routes ----
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+app.post('/api/auth/register', async (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password || password.length < 6) {
+    return res.status(400).json({ detail: '用户名或密码无效' });
+  }
+  if (users.has(username)) {
+    return res.status(400).json({ detail: '用户名已存在' });
+  }
+  const hash = await bcrypt.hash(password, 10);
+  users.set(username, { username, hash });
+  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '24h' });
+  return res.json({ token, username, userId: username });
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body || {};
+  const user = users.get(username);
+  if (!user) return res.status(401).json({ detail: '用户不存在' });
+  const ok = await bcrypt.compare(password, user.hash);
+  if (!ok) return res.status(401).json({ detail: '密码错误' });
+  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '24h' });
+  return res.json({ token, username });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  const token = (req.query.token as string) || '';
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as { username: string };
+    const user = users.get(payload.username);
+    if (!user) return res.status(404).json({ detail: '用户不存在' });
+    return res.json({ id: user.username, username: user.username, game_tokens: 0, points: 0 });
+  } catch {
+    return res.status(401).json({ detail: 'Token无效' });
+  }
+});
 
 // ---- Socket.io ----
 io.on('connection', (socket) => {

@@ -1,7 +1,18 @@
+/**
+ * 沉浸式德州扑克 — Node.js 服务端入口
+ *
+ * Express + Socket.io 架构
+ * 路由: /api/* REST, WS: socket.io rooms
+ */
+
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { GameState, WsMessage, ActionId } from '@poker/shared';
+import { MultiPokerEngine } from './game/engine.js';
+import { AIPersona } from './ai/persona.js';
+import { decideAction } from './ai/agent.js';
+import { updateStress, endHandStressDecay, DEFAULT_STRESS_CFG } from './ai/stress.js';
+import type { GameState, ActionId } from '@poker/shared/index.js';
 
 const app = express();
 const http = createServer(app);
@@ -11,33 +22,127 @@ const io = new Server(http, {
 
 const PORT = 3000;
 
-// ---- Routes ----
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now() });
-});
+// ---- Game Session ----
+interface GameSession {
+  engine: MultiPokerEngine;
+  ai: AIPersona;
+  playerChips: number;
+  aiChips: number;
+}
 
-// ---- WebSocket ----
+const sessions = new Map<string, GameSession>();
+
+function createSession(): GameSession {
+  const engine = new MultiPokerEngine(2, 25, 50, 2500);
+  engine.reset();
+  const ai = new AIPersona('小李', {
+    baseThinkTime: 0.8, noiseSigma: 0.15, bluffFrequency: 0.2, aggression: 1.2, color: '#E63946',
+  }, 1);
+  return { engine, ai, playerChips: 2500, aiChips: 2500 };
+}
+
+function adaptState(gs: GameSession): GameState {
+  const s = gs.engine.getState();
+  // Set player hole cards for seat 0
+  s.players[0].holeCards = gs.engine.players[0].holeCards;
+  // Add total chip info
+  return {
+    ...s,
+    playerChips: gs.playerChips,
+    aiChips: gs.aiChips,
+    players: s.players.map((p, i) => ({
+      ...p,
+      name: i === 0 ? '你' : gs.ai.name,
+      stress: i === 1 ? gs.ai.stress : null,
+    })),
+  };
+}
+
+// ---- LLM Talk (fallback) ----
+const FALLBACK_TALK: Record<string, string[]> = {
+  fold: ['不玩了不玩了', '这把先撤', '溜了溜了'],
+  call: ['我跟', '陪你玩', '接了'],
+  raise: ['加！', '来点压力', '看牌说话'],
+  all_in: ['梭了！', '全下！', '拼了！'],
+};
+
+function randomTalk(action: string): string {
+  const talks = FALLBACK_TALK[action] ?? ['...'];
+  return talks[Math.floor(Math.random() * talks.length)] ?? '...';
+}
+
+// ---- API Routes ----
+app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
+
+// ---- Socket.io ----
 io.on('connection', (socket) => {
-  console.log(`[WS] client connected: ${socket.id}`);
+  const gs = createSession();
+  sessions.set(socket.id, gs);
+  console.log(`[WS] ${socket.id} connected`);
 
-  socket.on('join', (data: { token?: string }) => {
-    console.log(`[WS] ${socket.id} joined`, data.token ? '(auth)' : '(guest)');
-    socket.emit('joined', { sessionId: socket.id });
+  socket.emit('state', adaptState(gs));
+
+  socket.on('action', (actionId: ActionId) => {
+    if (gs.engine.isOver()) return;
+    if (gs.engine.currentPlayer !== 0) return;
+
+    gs.engine.step(actionId);
+    if (actionId === 2 || actionId === 3) updateStress([gs.ai], 'raise', DEFAULT_STRESS_CFG);
+    else if (actionId === 4) updateStress([gs.ai], 'all_in', DEFAULT_STRESS_CFG);
+
+    socket.emit('state', adaptState(gs));
+
+    // AI turns
+    let safety = 0;
+    while (!gs.engine.isOver() && gs.engine.currentPlayer !== 0 && safety++ < 20) {
+      const cur = gs.engine.currentPlayer;
+      const s = gs.engine.getState();
+      s.players[cur].holeCards = gs.engine.players[cur].holeCards;
+
+      socket.emit('ai_thinking', { name: gs.ai.name, stress: gs.ai.stress });
+
+      const { actionId: aid } = decideAction(s, gs.ai, cur, DEFAULT_STRESS_CFG);
+      gs.engine.step(aid);
+
+      const aname = { 0: 'fold', 1: 'call', 2: 'raise', 3: 'raise', 4: 'all_in' }[aid] ?? 'call';
+      socket.emit('ai_action', { action: aname, text: `${gs.ai.name} ${aname}` });
+      socket.emit('table_talk', { text: randomTalk(aname), name: gs.ai.name });
+      socket.emit('state', adaptState(gs));
+    }
+
+    // Hand over
+    if (gs.engine.isOver()) {
+      const payoffs = gs.engine.getPayoffs();
+      gs.playerChips += payoffs[0];
+      gs.aiChips += payoffs[1];
+      endHandStressDecay([gs.ai]);
+
+      socket.emit('hand_result', {
+        winner: payoffs[0] > 0 ? 'player' : 'ai',
+        playerChips: gs.playerChips,
+        aiChips: gs.aiChips,
+        pot: gs.engine.totalPot(),
+        payoffs,
+        bankrupt: gs.playerChips <= gs.engine.bb,
+      });
+    }
   });
 
-  socket.on('action', (msg: WsMessage) => {
-    console.log(`[WS] ${socket.id} action:`, msg.action);
-    // TODO: GameSession handler
+  socket.on('restart', () => {
+    gs.engine.advanceDealer();
+    gs.engine.reset();
+    socket.emit('state', adaptState(gs));
   });
 
   socket.on('disconnect', () => {
-    console.log(`[WS] client disconnected: ${socket.id}`);
+    sessions.delete(socket.id);
+    console.log(`[WS] ${socket.id} disconnected`);
   });
 });
 
 // ---- Start ----
 http.listen(PORT, () => {
-  console.log(`[Server] listening on http://localhost:${PORT}`);
+  console.log(`[Server] http://localhost:${PORT}`);
 });
 
 export { app, io, http };

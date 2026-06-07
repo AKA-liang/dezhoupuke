@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: poker_db
+    environment:
+      POSTGRES_USER: poker
+      POSTGRES_PASSWORD: poker123
+      POSTGRES_DB: dezhoupuke
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data

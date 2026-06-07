@@ -15,7 +15,7 @@ import { AIPersona } from './ai/persona.js';
 import { decideAction } from './ai/agent.js';
 import { updateStress, endHandStressDecay, DEFAULT_STRESS_CFG } from './ai/stress.js';
 import { getTableTalk } from './ai/llm.js';
-import * as DB from './db/store.js';
+import * as DB from './db/pgStore.js';
 import type { GameState, ActionId } from '@poker/shared/index.js';
 
 const app = express();
@@ -73,9 +73,10 @@ app.use(express.json());
 // ---- API Routes ----
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', async (req, res) => {
   const uid = (req.query.socketId as string) || 'anon';
-  return res.json(DB.getStats(uid));
+  const stats = await DB.getStats(uid);
+  return res.json(stats);
 });
 
 app.post('/api/auth/register', async (req, res) => {
@@ -85,7 +86,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
   try {
     const hash = await bcrypt.hash(password, 10);
-    const user = DB.createUser(username, hash);
+    const user = await DB.createUser(username, hash);
     const token = jwt.sign({ userId: user.id, username }, JWT_SECRET, { expiresIn: '24h' });
     return res.json({ token, username, userId: user.id, gameTokens: user.gameTokens });
   } catch (e: unknown) {
@@ -95,7 +96,7 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
-  const user = DB.findUser(username);
+  const user = await DB.findUser(username);
   if (!user) return res.status(401).json({ detail: '用户不存在' });
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ detail: '密码错误' });
@@ -103,11 +104,11 @@ app.post('/api/auth/login', async (req, res) => {
   return res.json({ token, username, userId: user.id, gameTokens: user.gameTokens });
 });
 
-app.get('/api/auth/me', (req, res) => {
+app.get('/api/auth/me', async (req, res) => {
   const token = (req.query.token as string) || '';
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { userId: string; username: string };
-    const user = DB.findUser(payload.username);
+    const user = await DB.findUser(payload.username);
     if (!user) return res.status(404).json({ detail: '用户不存在' });
     return res.json({ id: user.id, username: user.username, game_tokens: user.gameTokens, points: user.points });
   } catch {

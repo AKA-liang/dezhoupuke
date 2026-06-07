@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useGameStore } from '../stores/gameStore.js';
 import { useSocket } from '../hooks/useSocket.js';
+import { playRaise, playAllIn } from '../game/sounds.js';
 
 interface Props {
   onBack: () => void;
@@ -153,9 +154,9 @@ export default function Table({ onBack }: Props) {
       <div style={{ position: 'absolute', bottom: 10, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 8 }}>
         <ABtn label="弃牌" color="#8b3a3a" disabled={!legalIds.includes(0)} onClick={() => send('action', 0)} />
         <ABtn label={state?.currentPlayer === 0 && state ? (state.players[0].inChips < state.players[1].inChips ? '跟注' : '过牌') : '--'} color="#2e6b3e" disabled={!legalIds.includes(1)} onClick={() => send('action', 1)} />
-        <ABtn label="加注½" color="#d4812b" disabled={!legalIds.includes(2)} onClick={() => send('action', 2)} />
-        <ABtn label="加注全池" color="#e67e22" disabled={!legalIds.includes(3)} onClick={() => send('action', 3)} />
-        <ABtn label="全下" color="#c0392b" disabled={!legalIds.includes(4)} onClick={() => send('action', 4)} />
+        <ABtn label="加注½" color="#d4812b" disabled={!legalIds.includes(2)} onClick={() => { playRaise(); send('action', 2); }} />
+        <ABtn label="加注全池" color="#e67e22" disabled={!legalIds.includes(3)} onClick={() => { playRaise(); send('action', 3); }} />
+        <ABtn label="全下" color="#c0392b" disabled={!legalIds.includes(4)} onClick={() => { playAllIn(); send('action', 4); }} />
         <ABtn label="下一局" color="#444" disabled={false} onClick={() => { prevLen.current = 0; send('restart', {}); }} />
         <ABtn label="← 返回" color="#444" disabled={false} onClick={onBack} />
       </div>

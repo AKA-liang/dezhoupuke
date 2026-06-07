@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useGameStore } from '../stores/gameStore.js';
+import { playRaise, playAllIn, playWin } from '../game/sounds.js';
 import type { GameState } from '@poker/shared/index.js';
 
 const SOCKET_URL = 'http://localhost:3000';
@@ -28,8 +29,10 @@ export function useSocket() {
       addMessage(`${d.name} 思考中...`);
     });
 
-    socket.on('ai_action', (d: { text: string }) => {
+    socket.on('ai_action', (d: { text: string; action: string }) => {
       addMessage(d.text);
+      if (d.action === 'raise' || d.action === 'r_pot' || d.action === 'r_half') playRaise();
+      else if (d.action === 'all_in') playAllIn();
     });
 
     socket.on('table_talk', (d: { text: string; name: string }) => {
@@ -38,6 +41,7 @@ export function useSocket() {
 
     socket.on('hand_result', (d: { winner: string; pot: number; gameTokens?: number }) => {
       addMessage(`🏆 ${d.winner === 'player' ? '你' : 'AI'} 赢得 ${d.pot}`);
+      if (d.winner === 'player') playWin();
       if (d.gameTokens !== undefined) {
         useGameStore.getState().auth.setSessionTokens(d.gameTokens);
       }

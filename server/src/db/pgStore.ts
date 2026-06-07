@@ -39,6 +39,14 @@ export async function findUser(username: string): Promise<User | null> {
   return { id: u.id, username: u.username, passwordHash: u.password_hash, isAdmin: u.is_admin, gameTokens: u.game_tokens, points: u.points };
 }
 
+export async function findUserById(id: string): Promise<User | null> {
+  await ensureInit();
+  const r = await getPool().query('SELECT * FROM users WHERE id = $1', [id]);
+  if (r.rows.length === 0) return null;
+  const u = r.rows[0];
+  return { id: u.id, username: u.username, passwordHash: u.password_hash, isAdmin: u.is_admin, gameTokens: u.game_tokens, points: u.points };
+}
+
 export async function createUser(username: string, hash: string): Promise<User> {
   await ensureInit();
   const id = Date.now().toString(36);

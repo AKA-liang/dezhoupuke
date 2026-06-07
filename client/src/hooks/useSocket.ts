@@ -13,7 +13,13 @@ export function useSocket() {
     const socket = io(SOCKET_URL, { transports: ['websocket'] });
     socketRef.current = socket;
 
-    socket.on('connect', () => setConnected(true));
+    socket.on('connect', () => {
+      setConnected(true);
+      const token = localStorage.getItem('token');
+      if (token) {
+        socket.emit('auth', { token });
+      }
+    });
     socket.on('disconnect', () => setConnected(false));
 
     socket.on('state', (gs: GameState) => setState(gs));
@@ -30,8 +36,11 @@ export function useSocket() {
       addMessage(`💬 ${d.name}: ${d.text}`);
     });
 
-    socket.on('hand_result', (d: { winner: string; pot: number }) => {
+    socket.on('hand_result', (d: { winner: string; pot: number; gameTokens?: number }) => {
       addMessage(`🏆 ${d.winner === 'player' ? '你' : 'AI'} 赢得 ${d.pot}`);
+      if (d.gameTokens !== undefined) {
+        useGameStore.getState().auth.setSessionTokens(d.gameTokens);
+      }
     });
 
     return () => { socket.disconnect(); };

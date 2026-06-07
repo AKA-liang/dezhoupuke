@@ -42,6 +42,9 @@ export const useGameStore = create<GameStore>((set) => ({
         auth: { ...prev.auth, token, username, gameTokens, points },
       }));
     },
+    setSessionTokens: (gameTokens) => {
+      set((prev) => ({ auth: { ...prev.auth, gameTokens } }));
+    },
     clearAuth: () => {
       localStorage.removeItem('token');
       set((prev) => ({

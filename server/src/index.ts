@@ -32,6 +32,7 @@ interface GameSession {
   ai: AIPersona;
   playerChips: number;
   aiChips: number;
+  userId: string | null;
 }
 
 const sessions = new Map<string, GameSession>();
@@ -42,7 +43,7 @@ function createSession(): GameSession {
   const ai = new AIPersona('小李', {
     baseThinkTime: 0.8, noiseSigma: 0.15, bluffFrequency: 0.2, aggression: 1.2, color: '#E63946',
   }, 1);
-  return { engine, ai, playerChips: 2500, aiChips: 2500 };
+  return { engine, ai, playerChips: 2500, aiChips: 2500, userId: null };
 }
 
 function adaptState(gs: GameSession): GameState {
@@ -124,7 +125,14 @@ io.on('connection', (socket) => {
 
   socket.emit('state', adaptState(gs));
 
-  socket.on('action', (actionId: ActionId) => {
+  socket.on('auth', (data: { token: string }) => {
+    try {
+      const payload = jwt.verify(data.token, JWT_SECRET) as { userId: string };
+      gs.userId = payload.userId;
+    } catch { /* guest */ }
+  });
+
+  socket.on('action', async (actionId: ActionId) => {
     if (gs.engine.isOver()) return;
     if (gs.engine.currentPlayer !== 0) return;
 
@@ -172,10 +180,18 @@ io.on('connection', (socket) => {
       gs.aiChips += payoffs[1];
       endHandStressDecay([gs.ai]);
 
-      // Persist stats (async fire-and-forget)
       const result = payoffs[0] > 0 ? 'win' : 'lose';
-      const socketId = socket.id; // for rudimentary user identification
-      DB.updateStats(socketId, result, payoffs[0], gs.engine.totalPot());
+      const uid = gs.userId || socket.id;
+
+      // Persist to PostgreSQL + stats
+      DB.updateStats(uid, result, payoffs[0], gs.engine.totalPot());
+      let gameTokens: number | undefined;
+      if (gs.userId) {
+        await DB.updateTokens(gs.userId, payoffs[0]);
+        await DB.recordTransaction(gs.userId, result === 'win' ? 'game_win' : 'game_lose', payoffs[0]);
+        const user = await DB.findUserById(gs.userId);
+        gameTokens = user?.gameTokens ?? 0;
+      }
 
       socket.emit('hand_result', {
         winner: payoffs[0] > 0 ? 'player' : 'ai',
@@ -183,6 +199,7 @@ io.on('connection', (socket) => {
         aiChips: gs.aiChips,
         pot: gs.engine.totalPot(),
         payoffs,
+        gameTokens,
         bankrupt: gs.playerChips <= gs.engine.bb,
       });
     }

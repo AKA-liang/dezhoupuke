@@ -1,0 +1,11 @@
+[
+  {
+    "id": "mq3z9rp0",
+    "username": "testuser",
+    "passwordHash": "$2b$10$UFkg/dQwrbMyPNRd4kgEGuXXDOxr5NNrpKttIudvc7MmT4g2WTU62",
+    "isAdmin": false,
+    "gameTokens": 10000,
+    "points": 0,
+    "createdAt": "2026-06-07T16:09:51.732Z"
+  }
+]

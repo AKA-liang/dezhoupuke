@@ -15,6 +15,7 @@ import { AIPersona } from './ai/persona.js';
 import { decideAction } from './ai/agent.js';
 import { updateStress, endHandStressDecay, DEFAULT_STRESS_CFG } from './ai/stress.js';
 import { getTableTalk } from './ai/llm.js';
+import * as DB from './db/store.js';
 import type { GameState, ActionId } from '@poker/shared/index.js';
 
 const app = express();
@@ -64,46 +65,51 @@ function adaptState(gs: GameSession): GameState {
 // ---- LLM Talk ----
 const talkCache = new Map<string, string>();
 
-// ---- In-memory user store (MVP) ----
+// ---- Auth (JSON DB) ----
 const JWT_SECRET = 'dev-secret-change-me';
-const users = new Map<string, { username: string; hash: string }>();
 
 app.use(express.json());
 
 // ---- API Routes ----
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
+app.get('/api/stats', (req, res) => {
+  const uid = (req.query.socketId as string) || 'anon';
+  return res.json(DB.getStats(uid));
+});
+
 app.post('/api/auth/register', async (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password || password.length < 6) {
     return res.status(400).json({ detail: '用户名或密码无效' });
   }
-  if (users.has(username)) {
-    return res.status(400).json({ detail: '用户名已存在' });
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const user = DB.createUser(username, hash);
+    const token = jwt.sign({ userId: user.id, username }, JWT_SECRET, { expiresIn: '24h' });
+    return res.json({ token, username, userId: user.id, gameTokens: user.gameTokens });
+  } catch (e: unknown) {
+    return res.status(400).json({ detail: (e as Error).message || '注册失败' });
   }
-  const hash = await bcrypt.hash(password, 10);
-  users.set(username, { username, hash });
-  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '24h' });
-  return res.json({ token, username, userId: username });
 });
 
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
-  const user = users.get(username);
+  const user = DB.findUser(username);
   if (!user) return res.status(401).json({ detail: '用户不存在' });
-  const ok = await bcrypt.compare(password, user.hash);
+  const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ detail: '密码错误' });
-  const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: '24h' });
-  return res.json({ token, username });
+  const token = jwt.sign({ userId: user.id, username }, JWT_SECRET, { expiresIn: '24h' });
+  return res.json({ token, username, userId: user.id, gameTokens: user.gameTokens });
 });
 
 app.get('/api/auth/me', (req, res) => {
   const token = (req.query.token as string) || '';
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { username: string };
-    const user = users.get(payload.username);
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string; username: string };
+    const user = DB.findUser(payload.username);
     if (!user) return res.status(404).json({ detail: '用户不存在' });
-    return res.json({ id: user.username, username: user.username, game_tokens: 0, points: 0 });
+    return res.json({ id: user.id, username: user.username, game_tokens: user.gameTokens, points: user.points });
   } catch {
     return res.status(401).json({ detail: 'Token无效' });
   }
@@ -164,6 +170,11 @@ io.on('connection', (socket) => {
       gs.playerChips += payoffs[0];
       gs.aiChips += payoffs[1];
       endHandStressDecay([gs.ai]);
+
+      // Persist stats (async fire-and-forget)
+      const result = payoffs[0] > 0 ? 'win' : 'lose';
+      const socketId = socket.id; // for rudimentary user identification
+      DB.updateStats(socketId, result, payoffs[0], gs.engine.totalPot());
 
       socket.emit('hand_result', {
         winner: payoffs[0] > 0 ? 'player' : 'ai',

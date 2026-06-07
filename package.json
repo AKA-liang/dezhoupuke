@@ -1,0 +1,5 @@
+{
+  "name": "dezhoupuke",
+  "private": true,
+  "workspaces": ["server", "client", "shared"]
+}

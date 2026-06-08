@@ -25,9 +25,10 @@ export interface Stats {
   elo: number;
 }
 
-let initialized = false;
+let initPromise: Promise<void> | null = null;
 async function ensureInit() {
-  if (!initialized) { await initSchema(); initialized = true; }
+  if (!initPromise) initPromise = initSchema();
+  await initPromise;
 }
 
 // ---- Users ----
@@ -60,6 +61,22 @@ export async function createUser(username: string, hash: string): Promise<User> 
 export async function updateTokens(userId: string, delta: number): Promise<void> {
   await ensureInit();
   await getPool().query('UPDATE users SET game_tokens = GREATEST(0, game_tokens + $1) WHERE id = $2', [delta, userId]);
+}
+
+export async function handResult(userId: string, tokensDelta: number, result: string, payoff: number, pot: number) {
+  await ensureInit();
+  const client = await getPool().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE users SET game_tokens = GREATEST(0, game_tokens + $1) WHERE id = $2', [tokensDelta, userId]);
+    await client.query("INSERT INTO transactions (user_id, type, tokens_delta) VALUES ($1, $2, $3)", [userId, result, tokensDelta]);
+    await client.query("INSERT INTO player_stats (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING", [userId]);
+    await client.query("UPDATE player_stats SET total_hands = total_hands + 1, wins = wins + $2, total_profit = total_profit + $3, max_pot = GREATEST(max_pot, $4), elo = elo + $5 WHERE user_id = $1", [userId, result === 'game_win' ? 1 : 0, payoff, pot, result === 'game_win' ? 10 : -10]);
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally { client.release(); }
 }
 
 // ---- Stats ----

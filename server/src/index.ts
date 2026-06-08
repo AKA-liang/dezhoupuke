@@ -206,14 +206,14 @@ io.on('connection', (socket) => {
       const result = payoffs[0] > 0 ? 'win' : 'lose';
       const uid = gs.userId || socket.id;
 
-      // Persist all DB changes
+      // Persist all DB changes atomically
       try {
-        await DB.updateStats(uid, result, payoffs[0], gs.engine.totalPot());
         if (gs.userId) {
-          await DB.updateTokens(gs.userId, payoffs[0]);
-          await DB.recordTransaction(gs.userId, result === 'win' ? 'game_win' : 'game_lose', payoffs[0]);
+          await DB.handResult(gs.userId, payoffs[0], result === 'win' ? 'game_win' : 'game_lose', payoffs[0], gs.engine.totalPot());
           const user = await DB.findUserById(gs.userId);
           gameTokens = user?.gameTokens ?? 0;
+        } else {
+          await DB.updateStats(uid, result, payoffs[0], gs.engine.totalPot());
         }
       } catch (err) {
         console.error('[WS] DB persist error:', err);

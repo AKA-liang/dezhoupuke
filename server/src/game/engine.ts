@@ -247,6 +247,7 @@ export class MultiPokerEngine {
 
   private splitPots(): { amount: number; eligible: number[] }[] {
     const active = this.activePlayers();
+    if (active.length === 0) return [];
     if (active.length === 1) {
       return [{ amount: this.totalPot(), eligible: [active[0].seat] }];
     }

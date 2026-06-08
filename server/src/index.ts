@@ -42,7 +42,7 @@ function createSession(): GameSession {
   const engine = new MultiPokerEngine(2, 25, 50, 2500);
   engine.reset();
   const ai = new AIPersona('小李', {
-    baseThinkTime: 0.8, noiseSigma: 0.15, bluffFrequency: 0.2, aggression: 1.2, color: '#E63946',
+    baseThinkTime: 0.8, noiseSigma: 0.15, bluffFrequency: 0.2, color: '#E63946',
   }, 1);
   return { engine, ai, playerChips: 2500, aiChips: 2500, userId: null, authenticated: false };
 }
@@ -254,7 +254,7 @@ trainingNsp.on('connection', (socket) => {
   engine.reset();
   const ais = [1, 2, 3, 4, 5].map(i => new AIPersona(
     ['老张', '小李', '王姐', '老张', '小李'][i - 1]!,
-    { baseThinkTime: 0.8 + i * 0.1, noiseSigma: 0.1, bluffFrequency: 0.08 + i * 0.03, aggression: 0.8 + i * 0.1, color: '#888' },
+    { baseThinkTime: 0.8 + i * 0.1, noiseSigma: 0.1, bluffFrequency: 0.08 + i * 0.03, color: '#888' },
     i,
   ));
 

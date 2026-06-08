@@ -8,6 +8,7 @@
 const API_BASE = 'https://api.minimaxi.com/v1';
 const API_KEY = process.env.MINIMAX_API_KEY || 'sk-cp-jDvInpCYY0In3qv8QIJ9CZ0pwvkgm2YXzlNvXU9Q7RZfTCOS4LA5n3Iv4vSZaNyTfxszdGM6lA3RDVPgAsYXYFg1vRgH46cKneauF4Bu-0DfhVRsIH8mjZo';
 const MODEL = 'MiniMax-M3';
+const talkCache = new Map<string, string>();
 
 const FALLBACK: Record<string, string[]> = {
   fold: ['不玩了不玩了', '这把先撤', '算你狠', '溜了溜了'],
@@ -33,31 +34,34 @@ export async function getTableTalk(personaName: string, action: string, context 
   const prompt = TALK_PROMPTS[action] || '说句话，10字以内。';
   const full = `你是德州扑克玩家"${personaName}"。${prompt}\n局势: ${context}`;
 
-  try {
-    const resp = await fetch(`${API_BASE}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [{ role: 'user', content: full }],
-        max_tokens: 200,
-        temperature: 0.9,
-      }),
-      signal: AbortSignal.timeout(8000),
-    });
+  // Check cache
+  const cacheKey = `${personaName}:${action}:${context}`;
+  const cached = talkCache.get(cacheKey);
+  if (cached) return cached;
 
-    if (resp.ok) {
-      const data = await resp.json() as { choices?: { message?: { content?: string } }[] };
-      const raw = data?.choices?.[0]?.message?.content ?? '';
-      // Strip <think> block from M3 model
-      const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-      if (cleaned) return cleaned;
+  // Try API with one retry
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const resp = await fetch(`${API_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: MODEL, messages: [{ role: 'user', content: full }], max_tokens: 200, temperature: 0.9 }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (resp.ok) {
+        const data = await resp.json() as { choices?: { message?: { content?: string } }[] };
+        const raw = data?.choices?.[0]?.message?.content ?? '';
+        const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        if (cleaned) {
+          if (talkCache.size > 200) talkCache.clear();
+          talkCache.set(cacheKey, cleaned);
+          return cleaned;
+        }
+      }
+    } catch (e) {
+      console.error('[LLM] API attempt', attempt + 1, 'failed:', (e as Error).message);
+      if (attempt === 0) await new Promise(r => setTimeout(r, 500));
     }
-  } catch {
-    // fall through to fallback
   }
 
   return pick(FALLBACK[action] ?? ['...']);

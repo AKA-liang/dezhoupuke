@@ -22,9 +22,9 @@ export const DEFAULT_STRESS_CFG: StressConfig = {
 
 export function updateStress(ais: AIPersona[], actionType: string, cfg: StressConfig) {
   for (const ai of ais) {
-    if (actionType === 'raise') ai.stress = Math.min(100, ai.stress + cfg.increasePerRaise);
-    else if (actionType === 'all_in') ai.stress = Math.min(100, ai.stress + cfg.increasePerAllin);
-    else if (actionType === 'bluff') ai.stress = Math.min(100, ai.stress + cfg.increasePerBluff);
+    if (actionType === 'raise') ai.stress = Math.min(100, Math.max(0, ai.stress + cfg.increasePerRaise));
+    else if (actionType === 'all_in') ai.stress = Math.min(100, Math.max(0, ai.stress + cfg.increasePerAllin));
+    else if (actionType === 'bluff') ai.stress = Math.min(100, Math.max(0, ai.stress + cfg.increasePerBluff));
   }
 }
 

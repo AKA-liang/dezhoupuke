@@ -20,6 +20,15 @@ const SUIT: Record<string, string> = { S: '♠', H: '♥', D: '♦', C: '♣' };
 const SUIT_COLOR: Record<string, string> = { H: '#d42020', D: '#d42020', S: '#1a1a1a', C: '#1a1a1a' };
 const RANK: Record<string, string> = { T: '10' };
 
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  if ((ctx as any).roundRect) { (ctx as any).roundRect(x, y, w, h, r); return; }
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
+  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r); ctx.closePath();
+}
+
 function cardStr(c: { rank: string; suit: string }): string {
   return `${(RANK[c.rank] ?? c.rank)}${SUIT[c.suit] ?? c.suit}`;
 }
@@ -140,12 +149,27 @@ export default function Table({ mode, onBack }: Props) {
   useEffect(() => {
     let frame = 0;
     const loop = () => {
-      draw();
+      if (!state) {
+        const canvas = canvasRef.current;
+        if (canvas) {
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#0e2e14';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#999';
+            ctx.font = '18px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('等待发牌...', canvas.width / 2, canvas.height / 2);
+          }
+        }
+      } else {
+        draw();
+      }
       frame = requestAnimationFrame(loop);
     };
     frame = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(frame);
-  }, [draw]);
+  }, [draw, state]);
 
   const legalIds = state?.legalActions ?? [];
 
@@ -192,7 +216,7 @@ function drawCard(ctx: CanvasRenderingContext2D, x: number, y: number, card: { r
   const w = 44, h = 62, r = 5;
   ctx.save();
   ctx.beginPath();
-  ctx.roundRect(x - w / 2, y - h / 2, w, h, r);
+  roundRect(ctx, x - w / 2, y - h / 2, w, h, r);
   ctx.clip();
   if (!faceUp || !card) {
     ctx.fillStyle = '#2c3e66';

@@ -13,8 +13,9 @@ export function useTrainingSocket() {
 
     s.on('state', (gs: GameState) => useGameStore.getState().setState(gs));
     s.on('ai_thinking', (d) => useGameStore.getState().addMessage(`${d.name} 思考中...`));
-    s.on('hand_result', (d) => {
+    s.on('hand_result', (d: { winner: string; pot: number; gameTokens?: number }) => {
       useGameStore.getState().addMessage(`🏆 ${d.winner === 'player' ? '你' : 'AI'} 赢得 ${d.pot}`);
+      if (d.gameTokens !== undefined) useGameStore.getState().auth.setSessionTokens(d.gameTokens);
       if (d.winner === 'player') playWin();
     });
     s.on('connect', () => useGameStore.getState().setConnected(true));

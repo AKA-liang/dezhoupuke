@@ -353,7 +353,7 @@ export class MultiPokerEngine {
     if (p.stack > 0 && !p.allIn) {
       actions.push({ id: 2, name: 'raise_half_pot' });
       actions.push({ id: 3, name: 'raise_pot' });
-      actions.push({ id: 4, name: 'all_in' });
+      if (!actions.some(a => a.id === 4)) actions.push({ id: 4, name: 'all_in' });
     }
 
     return actions;

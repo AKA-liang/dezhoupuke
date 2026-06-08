@@ -33,6 +33,7 @@ interface GameSession {
   playerChips: number;
   aiChips: number;
   userId: string | null;
+  authenticated: boolean;
 }
 
 const sessions = new Map<string, GameSession>();
@@ -43,7 +44,7 @@ function createSession(): GameSession {
   const ai = new AIPersona('小李', {
     baseThinkTime: 0.8, noiseSigma: 0.15, bluffFrequency: 0.2, aggression: 1.2, color: '#E63946',
   }, 1);
-  return { engine, ai, playerChips: 2500, aiChips: 2500, userId: null };
+  return { engine, ai, playerChips: 2500, aiChips: 2500, userId: null, authenticated: false };
 }
 
 function adaptState(gs: GameSession): GameState {
@@ -140,13 +141,20 @@ io.on('connection', (socket) => {
 
   socket.on('auth', (data: { token: string }) => {
     try {
-      const payload = jwt.verify(data.token, JWT_SECRET) as { userId: string };
-      gs.userId = payload.userId;
+      const payload = jwt.verify(data.token, JWT_SECRET);
+      if (typeof payload === 'object' && payload !== null && 'userId' in payload) {
+        gs.userId = (payload as { userId: string }).userId;
+        gs.authenticated = true;
+      }
     } catch { /* guest */ }
   });
 
   socket.on('action', async (actionId: ActionId) => {
     try {
+    if (gs.playerChips <= gs.engine.bb && !gs.engine.isOver()) {
+      socket.emit('server_msg', { text: '筹码不足，请返回主页重新开始' });
+      return;
+    }
     if (gs.engine.isOver()) return;
     if (gs.engine.currentPlayer !== 0) return;
 
@@ -186,6 +194,7 @@ io.on('connection', (socket) => {
 
       socket.emit('state', adaptState(gs));
     }
+    if (safety >= 20 && !gs.engine.isOver()) console.error('[WS] AI turn limit exceeded');
 
     // Hand over
     if (gs.engine.isOver()) {

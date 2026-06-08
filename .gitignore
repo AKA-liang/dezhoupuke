@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.log
 .env
+.env.*
 data/postgres/
 data/users.json
 data/stats_*.json

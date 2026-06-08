@@ -1,5 +1,12 @@
 {
   "name": "dezhoupuke",
   "private": true,
+  "scripts": {
+    "dev": "cd server && npx tsx src/index.ts",
+    "dev:client": "cd client && npx vite --port 5173",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "start": "docker compose up -d && cd server && npx tsx src/index.ts"
+  },
   "workspaces": ["server", "client", "shared"]
 }

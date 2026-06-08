@@ -67,7 +67,7 @@ function adaptState(gs: GameSession): GameState {
 const talkCache = new Map<string, string>();
 
 // ---- Auth (JSON DB) ----
-const JWT_SECRET = 'dev-secret-change-me';
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 
 app.use(express.json());
 
@@ -75,9 +75,14 @@ app.use(express.json());
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.get('/api/stats', async (req, res) => {
-  const uid = (req.query.socketId as string) || 'anon';
-  const stats = await DB.getStats(uid);
-  return res.json(stats);
+  try {
+    const uid = (req.query.userId as string) || 'anon';
+    const stats = await DB.getStats(uid);
+    return res.json(stats);
+  } catch (err) {
+    console.error('[API] /stats error:', err);
+    return res.status(500).json({ detail: '服务暂不可用' });
+  }
 });
 
 app.post('/api/auth/register', async (req, res) => {
@@ -96,13 +101,18 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
-  const { username, password } = req.body || {};
-  const user = await DB.findUser(username);
-  if (!user) return res.status(401).json({ detail: '用户不存在' });
-  const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) return res.status(401).json({ detail: '密码错误' });
-  const token = jwt.sign({ userId: user.id, username }, JWT_SECRET, { expiresIn: '24h' });
-  return res.json({ token, username, userId: user.id, gameTokens: user.gameTokens });
+  try {
+    const { username, password } = req.body || {};
+    const user = await DB.findUser(username);
+    if (!user) return res.status(401).json({ detail: '用户不存在' });
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) return res.status(401).json({ detail: '密码错误' });
+    const token = jwt.sign({ userId: user.id, username }, JWT_SECRET, { expiresIn: '24h' });
+    return res.json({ token, username, userId: user.id, gameTokens: user.gameTokens });
+  } catch (err) {
+    console.error('[API] login error:', err);
+    return res.status(500).json({ detail: '服务暂不可用' });
+  }
 });
 
 app.get('/api/auth/me', async (req, res) => {
@@ -125,6 +135,8 @@ io.on('connection', (socket) => {
   console.log(`[WS] ${socket.id} connected`);
 
   socket.emit('state', adaptState(gs));
+
+  socket.on('error', (err) => console.error('[WS] socket error:', err.message));
 
   socket.on('auth', (data: { token: string }) => {
     try {
@@ -185,14 +197,17 @@ io.on('connection', (socket) => {
       const result = payoffs[0] > 0 ? 'win' : 'lose';
       const uid = gs.userId || socket.id;
 
-      // Persist to PostgreSQL + stats
-      DB.updateStats(uid, result, payoffs[0], gs.engine.totalPot());
-      let gameTokens: number | undefined;
-      if (gs.userId) {
-        await DB.updateTokens(gs.userId, payoffs[0]);
-        await DB.recordTransaction(gs.userId, result === 'win' ? 'game_win' : 'game_lose', payoffs[0]);
-        const user = await DB.findUserById(gs.userId);
-        gameTokens = user?.gameTokens ?? 0;
+      // Persist all DB changes
+      try {
+        await DB.updateStats(uid, result, payoffs[0], gs.engine.totalPot());
+        if (gs.userId) {
+          await DB.updateTokens(gs.userId, payoffs[0]);
+          await DB.recordTransaction(gs.userId, result === 'win' ? 'game_win' : 'game_lose', payoffs[0]);
+          const user = await DB.findUserById(gs.userId);
+          gameTokens = user?.gameTokens ?? 0;
+        }
+      } catch (err) {
+        console.error('[WS] DB persist error:', err);
       }
 
       socket.emit('hand_result', {
@@ -262,6 +277,8 @@ trainingNsp.on('connection', (socket) => {
       socket.emit('ai_thinking', { name: ai.name, stress: ai.stress, seat: cur });
       const { actionId: aid } = decideAction(s, ai, cur, DEFAULT_STRESS_CFG);
       engine.step(aid);
+      const aname = { 0: 'fold', 1: 'call', 2: 'raise', 3: 'raise', 4: 'all_in' }[aid] ?? 'call';
+      socket.emit('ai_action', { action: aname, text: `${ai.name} ${aname}`, seat: cur });
       socket.emit('state', trainingState());
     }
 

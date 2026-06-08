@@ -34,17 +34,22 @@ export const useGameStore = create<GameStore>((set) => ({
   })),
   auth: {
     token: localStorage.getItem('token'),
-    username: null,
-    gameTokens: 0,
-    points: 0,
-    elo: 1200,
+    username: localStorage.getItem('username'),
+    gameTokens: Number(localStorage.getItem('gameTokens')) || 0,
+    points: Number(localStorage.getItem('points')) || 0,
+    elo: Number(localStorage.getItem('elo')) || 1200,
     setAuth: (token, username, gameTokens, points, elo) => {
       localStorage.setItem('token', token);
+      localStorage.setItem('username', username);
+      localStorage.setItem('gameTokens', String(gameTokens));
+      localStorage.setItem('points', String(points));
+      localStorage.setItem('elo', String(elo));
       set((prev) => ({
         auth: { ...prev.auth, token, username, gameTokens, points, elo },
       }));
     },
     setSessionTokens: (gameTokens) => {
+      localStorage.setItem('gameTokens', String(gameTokens));
       set((prev) => ({ auth: { ...prev.auth, gameTokens } }));
     },
     clearAuth: () => {

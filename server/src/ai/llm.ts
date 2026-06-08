@@ -6,7 +6,7 @@
  */
 
 const API_BASE = 'https://api.minimaxi.com/v1';
-const API_KEY = 'sk-cp-jDvInpCYY0In3qv8QIJ9CZ0pwvkgm2YXzlNvXU9Q7RZfTCOS4LA5n3Iv4vSZaNyTfxszdGM6lA3RDVPgAsYXYFg1vRgH46cKneauF4Bu-0DfhVRsIH8mjZo';
+const API_KEY = process.env.MINIMAX_API_KEY || 'sk-cp-jDvInpCYY0In3qv8QIJ9CZ0pwvkgm2YXzlNvXU9Q7RZfTCOS4LA5n3Iv4vSZaNyTfxszdGM6lA3RDVPgAsYXYFg1vRgH46cKneauF4Bu-0DfhVRsIH8mjZo';
 const MODEL = 'MiniMax-M3';
 
 const FALLBACK: Record<string, string[]> = {

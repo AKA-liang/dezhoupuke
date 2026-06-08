@@ -105,10 +105,10 @@ export class MultiPokerEngine {
       sbSeat = this.dealer;
       bbSeat = (this.dealer + 1) % 2;
     }
-    this.bet(this.players[sbSeat], this.sb);
-    this.bet(this.players[bbSeat], this.bb);
-    this.roundBets[sbSeat] = this.sb;
-    this.roundBets[bbSeat] = this.bb;
+    const sbActual = this.bet(this.players[sbSeat], this.sb);
+    const bbActual = this.bet(this.players[bbSeat], this.bb);
+    this.roundBets[sbSeat] = sbActual;
+    this.roundBets[bbSeat] = bbActual;
     this.currentPlayer = (bbSeat + 1) % this.numPlayers;
   }
 
@@ -182,7 +182,7 @@ export class MultiPokerEngine {
     const total = diff + amount;
     const actual = this.bet(p, total);
     this.roundBets[p.seat] += actual;
-    if (actual >= this.minRaise) {
+    if (actual >= diff + this.minRaise) {
       this.minRaise = actual - diff > 0 ? actual - diff : this.minRaise;
       this.lastRaiser = p.seat;
       for (const pl of this.players) {

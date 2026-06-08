@@ -6,12 +6,14 @@
  */
 
 const RANKS = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
+const RANK_ORDER: Record<string, number> = { A:14,K:13,Q:12,J:11,T:10,'9':9,'8':8,'7':7,'6':6,'5':5,'4':4,'3':3,'2':2 };
 
-type RangeKey = string; // "AKs", "AA", "72o"
+type RangeKey = string;
 
 function key(rank1: string, rank2: string, suited: boolean): RangeKey {
-  if (suited) return `${rank1}${rank2}s`;
-  return rank1 === rank2 ? `${rank1}${rank1}` : `${rank1}${rank2}o`;
+  const [hi, lo] = (RANK_ORDER[rank1] ?? 0) >= (RANK_ORDER[rank2] ?? 0) ? [rank1, rank2] : [rank2, rank1];
+  if (suited) return `${hi}${lo}s`;
+  return hi === lo ? `${hi}${hi}` : `${hi}${lo}o`;
 }
 
 // Base suited matrix (13x13, A-high to 2-low)

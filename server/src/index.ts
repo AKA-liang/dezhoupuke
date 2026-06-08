@@ -134,6 +134,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('action', async (actionId: ActionId) => {
+    try {
     if (gs.engine.isOver()) return;
     if (gs.engine.currentPlayer !== 0) return;
 
@@ -203,6 +204,9 @@ io.on('connection', (socket) => {
         gameTokens,
         bankrupt: gs.playerChips <= gs.engine.bb,
       });
+    }
+    } catch (err) {
+      console.error('[WS] action error:', err);
     }
   });
 

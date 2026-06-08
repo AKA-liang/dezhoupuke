@@ -9,6 +9,10 @@ const pool = new pg.Pool({
   max: 10,
 });
 
+pool.on('error', (err) => {
+  console.error('[PG] Pool error:', err.message);
+});
+
 let schemaRun = false;
 
 export async function initSchema() {

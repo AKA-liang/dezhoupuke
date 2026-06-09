@@ -1,249 +1,232 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useGameStore } from '../stores/gameStore.js';
-import { useSocket } from '../hooks/useSocket.js';
-import { useTrainingSocket } from '../hooks/useTrainingSocket.js';
+import { useMessageStore } from '../stores/messageStore.js';
+import { useAuthStore } from '../stores/authStore.js';
+import { usePokerSocket } from '../hooks/usePokerSocket.js';
 import { playRaise, playAllIn } from '../game/sounds.js';
+import PokerCard from '../components/PokerCard.js';
+import ChatPanel from '../components/ChatPanel.js';
+import Modal from '../components/Modal.js';
+import PlayerTag from '../components/PlayerTag.js';
+import ActionBar from '../components/ActionBar.js';
+import type { Card, HandResult, HandStart, ChatMessage } from '@poker/shared/index.js';
 
 interface Props {
   mode: '1v1' | 'training';
+  aiCount: number;
   onBack: () => void;
 }
 
-interface AnimState {
-  cardDealProgress: number;
-  communityLen: number;
-  allIn: boolean;
-  showdown: boolean;
+const STAGE_LABELS: Record<string, string> = {
+  preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌', showdown: '摊牌',
+};
+
+let chatSeq = 0;
+function makeChatId() { return ++chatSeq; }
+
+function getSeatPosition(index: number, total: number): { left: number; top: number } {
+  if (total <= 1) return { left: 50, top: 50 };
+  const aiIndex = index - 1;
+  const aiCount = total - 1;
+  const startAngle = Math.PI;
+  const t = aiCount === 1 ? 0.5 : aiIndex / (aiCount - 1);
+  const angle = startAngle + (0 - startAngle) * t;
+  return { left: 50 + 42 * Math.cos(angle), top: 50 - 28 * Math.sin(angle) };
 }
 
-const SUIT: Record<string, string> = { S: '♠', H: '♥', D: '♦', C: '♣' };
-const SUIT_COLOR: Record<string, string> = { H: '#d42020', D: '#d42020', S: '#1a1a1a', C: '#1a1a1a' };
-const RANK: Record<string, string> = { T: '10' };
+export default function Table({ mode, aiCount, onBack }: Props) {
+  const { state, connected } = useGameStore();
+  const { messages } = useMessageStore();
+  const auth = useAuthStore();
+  const { send } = usePokerSocket(mode === 'training' ? 'training' : '1v1');
 
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  if ((ctx as any).roundRect) { (ctx as any).roundRect(x, y, w, h, r); return; }
-  ctx.beginPath();
-  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h - r); ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-  ctx.lineTo(x + r, y + h); ctx.arcTo(x, y + h, x, y + h - r, r);
-  ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r); ctx.closePath();
-}
+  const [chat, setChat] = useState<ChatMessage[]>([]);
+  const [lastResult, setLastResult] = useState<HandResult | null>(null);
+  const [handStart, setHandStart] = useState<HandStart | null>(null);
+  const [showResult, setShowResult] = useState(false);
 
-function cardStr(c: { rank: string; suit: string }): string {
-  return `${(RANK[c.rank] ?? c.rank)}${SUIT[c.suit] ?? c.suit}`;
-}
-function cardColor(c: { suit: string }): string {
-  return SUIT_COLOR[c.suit] ?? '#1a1a1a';
-}
-
-export default function Table({ mode, onBack }: Props) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const { state, connected, messages } = useGameStore();
-  const { send: send1v1 } = useSocket();
-  const { send: sendTraining } = useTrainingSocket();
-  const send = mode === 'training' ? sendTraining : send1v1;
-  const prevLen = useRef(0);
-  const prevAllIn = useRef(false);
-  const [animDeal, setAnimDeal] = useState(0);
-  const [pulse, setPulse] = useState(false);
-
-  // Detect changes for animations
+  // 进入对局时清空
   useEffect(() => {
-    if (!state) return;
-    const cLen = state.communityCards.length;
-    if (cLen > prevLen.current) {
-      setAnimDeal(prev => prev + 1);
-      setDealStart(Date.now());
-      prevLen.current = cLen;
-    }
-    const anyAllIn = state.players.some(p => p.allIn);
-    if (anyAllIn && !prevAllIn.current) {
-      setPulse(true);
-      setTimeout(() => setPulse(false), 2400);
-    }
-    prevAllIn.current = anyAllIn;
-    if (state.stage === 'showdown') {
-      prevLen.current = 0;
-    }
-  }, [state]);
+    useMessageStore.getState().resetAll();
+    setChat([]);
+    setLastResult(null);
+    setHandStart(null);
+    setShowResult(false);
+  }, [mode, aiCount]);
 
-  // Draw canvas
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !state) return;
-    const ctx = canvas.getContext('2d')!;
-    const W = canvas.width;
-    const H = canvas.height;
-    ctx.clearRect(0, 0, W, H);
-
-    // Felt background
-    const felt = ctx.createRadialGradient(W / 2, H * 0.3, 50, W / 2, H * 0.3, W);
-    felt.addColorStop(0, '#2d6b3a');
-    felt.addColorStop(0.4, '#1a4a24');
-    felt.addColorStop(1, '#0e2e14');
-    ctx.fillStyle = felt;
-    ctx.fillRect(0, 0, W, H);
-
-    // Dealer chip
-    ctx.fillStyle = '#ffd966';
-    ctx.beginPath();
-    ctx.arc(W / 2, 28, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.font = '9px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('D', W / 2, 31);
-
-    // Community cards with animation
-    const cards = state.communityCards;
-    for (let i = 0; i < cards.length; i++) {
-      const targetX = W / 2 - (cards.length - 1) * 30 + i * 60;
-      const targetY = 130;
-      // Animate from center if this is the newest card
-      let x = targetX, y = targetY;
-      if (i === cards.length - 1 && animDeal > 0 && dealStart > 0) {
-        const elapsed = Date.now() - dealStart;
-        const t = Math.min(1, elapsed / 350);
-        const ease = 1 - Math.pow(1 - t, 3);
-        if (t < 1) {
-          x = W / 2 + (targetX - W / 2) * ease;
-          y = targetY - 200 * (1 - ease);
-        }
-      }
-      drawCard(ctx, x, y, cards[i]!, true);
-    }
-
-    // Pot
-    ctx.fillStyle = '#ffd966';
-    ctx.font = 'bold 14px sans-serif';
-    ctx.fillText(`底池: ${state.totalPot}`, W / 2, 210);
-
-    // AI (seat 1)
-    const p1 = state.players[1];
-    drawPlayer(ctx, W / 2, 80, p1?.stack ?? 0, p1?.name ?? 'AI', false);
-    const isShowdown = state.stage === 'showdown';
-    for (let i = 0; i < 2; i++) {
-      const card = isShowdown ? (p1?.holeCards?.[i] ?? null) : null;
-      drawCard(ctx, W / 2 - 30 + i * 55, 50, card, isShowdown);
-    }
-
-    // Player (seat 0)
-    const p0 = state.players[0];
-    drawPlayer(ctx, W / 2, H - 100, p0?.stack ?? 0, p0?.name ?? '你', true);
-    if (p0?.holeCards) {
-      for (let i = 0; i < p0.holeCards.length; i++) {
-        drawCard(ctx, W / 2 - 30 + i * 55, H - 160, p0.holeCards[i]!, true);
-      }
-    }
-
-    ctx.fillStyle = connected ? '#0f0' : '#f66';
-    ctx.font = '11px sans-serif';
-    ctx.fillText(connected ? '已连接' : '断开', W - 50, H - 10);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.font = '12px sans-serif';
-    ctx.fillText(stageLabel(state.stage), W / 2, 230);
-
-  }, [state, connected, animDeal]);
-
-  // Animation loop
+  // 训练模式：发送 init 事件（CRITICAL FIX）
   useEffect(() => {
-    let frame = 0;
-    const loop = () => {
-      if (!state) {
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.fillStyle = '#0e2e14';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#999';
-            ctx.font = '18px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.fillText('等待发牌...', canvas.width / 2, canvas.height / 2);
-          }
-        }
-      } else {
-        draw();
-      }
-      frame = requestAnimationFrame(loop);
+    if (mode === 'training') {
+      send('init', { aiCount });
+    }
+  }, [mode, aiCount, send]);
+
+  // 离开对局时清理
+  useEffect(() => {
+    return () => {
+      useMessageStore.getState().resetAll();
+      useGameStore.getState().setState(null);
     };
-    frame = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(frame);
-  }, [draw, state]);
+  }, []);
 
+  // CustomEvent listeners for chat, hand_result, hand_start
+  useEffect(() => {
+    const chatH = (e: Event) => {
+      const d = (e as CustomEvent).detail as { name: string; text: string; from: string };
+      setChat(prev => [...prev, { id: makeChatId(), name: d.name, text: d.text, isPlayer: d.from === 'player', timestamp: Date.now() }]);
+    };
+    const resultH = (e: Event) => { setLastResult((e as CustomEvent).detail as HandResult); setShowResult(true); };
+    const startH = (e: Event) => { setHandStart((e as CustomEvent).detail as HandStart); };
+    window.addEventListener('poker:chat', chatH);
+    window.addEventListener('poker:hand_result', resultH);
+    window.addEventListener('poker:hand_start', startH);
+    return () => {
+      window.removeEventListener('poker:chat', chatH);
+      window.removeEventListener('poker:hand_result', resultH);
+      window.removeEventListener('poker:hand_start', startH);
+    };
+  }, []);
+
+  const isPlayerTurn = state?.currentPlayer === 0;
+  const isHandOver = !state || state.stage === 'showdown';
   const legalIds = state?.legalActions ?? [];
+  const me = state?.players[0];
+  const aiPlayers = state?.players.slice(1) ?? [];
+  const isShowdown = state?.stage === 'showdown';
+
+  const myHoleCards: (Card | null)[] = useMemo(() => {
+    if (!me?.holeCards) return [null, null];
+    return [me.holeCards[0] ?? null, me.holeCards[1] ?? null];
+  }, [me?.holeCards]);
+
+  const callLabel = useMemo(() => {
+    if (!state || !isPlayerTurn) return '过牌/跟注';
+    if (state.players.length < 2) return '过牌/跟注';
+    const p0 = state.players[0]!;
+    const p1 = state.players[1]!;
+    return p0.inChips < p1.inChips ? '跟注' : p0.inChips === p1.inChips ? '过牌' : '跟注';
+  }, [state, isPlayerTurn]);
+
+  const handleAction = (aid: number) => {
+    if (!isPlayerTurn) return;
+    if (aid === 2 || aid === 3) playRaise();
+    else if (aid === 4) playAllIn();
+    send('action', aid);
+  };
+
+  const handleRestart = () => {
+    if (!isHandOver) return;
+    send('restart', {});
+  };
+
+  const handleSendChat = (text: string) => {
+    send('chat', { text });
+    setChat(prev => [...prev, { id: makeChatId(), name: auth.username || '你', text, isPlayer: true, timestamp: Date.now() }]);
+  };
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', width: 800, height: 550, margin: '0 auto' }}>
-      <canvas ref={canvasRef} width={800} height={550} style={{
-        borderRadius: 16, display: 'block',
-        transition: 'box-shadow 0.3s',
-        boxShadow: pulse ? '0 0 40px rgba(255,0,0,0.8)' : 'none',
-      }} />
-
-      {/* Action buttons */}
-      <div style={{ position: 'absolute', bottom: 10, left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: 8 }}>
-        <ABtn label="弃牌" color="#8b3a3a" disabled={!legalIds.includes(0)} onClick={() => send('action', 0)} />
-        <ABtn label={state?.currentPlayer === 0 && state && state.players.length >= 2 ? (state.players[0].inChips < state.players[1].inChips ? '跟注' : '过牌') : '--'} color="#2e6b3e" disabled={!legalIds.includes(1)} onClick={() => send('action', 1)} />
-        <ABtn label="加注½" color="#d4812b" disabled={!legalIds.includes(2)} onClick={() => { playRaise(); send('action', 2); }} />
-        <ABtn label="加注全池" color="#e67e22" disabled={!legalIds.includes(3)} onClick={() => { playRaise(); send('action', 3); }} />
-        <ABtn label="全下" color="#c0392b" disabled={!legalIds.includes(4)} onClick={() => { playAllIn(); send('action', 4); }} />
-        <ABtn label="下一局" color="#444" disabled={false} onClick={() => { prevLen.current = 0; send('restart', {}); }} />
-        <ABtn label="← 返回" color="#444" disabled={false} onClick={onBack} />
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, width: '100%' }}>
+      {/* Top bar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, width: '100%', maxWidth: 860, padding: '8px 16px', background: 'linear-gradient(180deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.6) 100%)', border: '1px solid rgba(212,165,72,0.3)', borderRadius: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#f5e7d9', fontSize: '0.95rem' }}>
+          <span style={{ color: '#d4a548', fontWeight: 'bold' }}>♠ 德州扑克 ♥</span>
+          <span style={{ color: '#666' }}>|</span>
+          <span>{mode === '1v1' ? '1v1 对局' : `陪练 ${aiCount + 1} 人局`}</span>
+          {handStart && <span style={{ color: '#888', fontSize: '0.8rem' }}>第 {handStart.hand + 1} 局</span>}
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 14, fontSize: '0.85rem' }}>
+          <span style={{ color: '#aaa' }}>{auth.username || '游客'}{auth.token && <span style={{ color: '#d4a548', marginLeft: 6 }}>· {auth.gameTokens} 币</span>}</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: connected ? '#7fd4ff' : '#e34234' }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: connected ? '#7fd4ff' : '#e34234', boxShadow: connected ? '0 0 6px #7fd4ff' : 'none' }} />
+            {connected ? '已连接' : '未连接'}
+          </span>
+        </div>
       </div>
+
+      {/* Table area */}
+      <div style={{ position: 'relative', width: 800, height: 460, background: 'radial-gradient(ellipse at center, #2d6b3a 0%, #1a4a24 40%, #0e2e14 100%)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 8px 24px rgba(0,0,0,0.5), inset 0 0 0 3px rgba(212,165,72,0.3)' }}>
+        <div style={{ position: 'absolute', top: '15%', left: '8%', right: '8%', bottom: '20%', border: '1px solid rgba(212,165,72,0.3)', borderRadius: '50%', pointerEvents: 'none' }} />
+
+        {/* AI players */}
+        {state && aiPlayers.map((p, i) => {
+          const si = i + 1;
+          const pos = getSeatPosition(si, state.players.length);
+          const showHole = isShowdown && p.holeCards;
+          return (
+            <div key={p.seat} style={{ position: 'absolute', left: `${pos.left}%`, top: `${pos.top}%`, transform: 'translate(-50%, -50%)', textAlign: 'center', minWidth: 80, opacity: p.folded ? 0.5 : 1 }}>
+              <PlayerTag name={p.name} stack={p.stack} inChips={p.inChips} folded={p.folded} allIn={p.allIn} active={state.currentPlayer === si} size="sm" />
+              {showHole && <div style={{ display: 'flex', gap: 4, justifyContent: 'center', marginTop: 4, transform: 'scale(0.7)', transformOrigin: 'top center' }}>
+                <PokerCard card={p.holeCards?.[0] ?? null} faceUp size="sm" />
+                <PokerCard card={p.holeCards?.[1] ?? null} faceUp size="sm" />
+              </div>}
+            </div>
+          );
+        })}
+
+        {/* Community */}
+        <div style={{ position: 'absolute', top: '52%', left: '50%', transform: 'translate(-50%, -50%)', display: 'flex', justifyContent: 'center', gap: 6 }}>
+          {[0, 1, 2, 3, 4].map(i => <PokerCard key={i} card={state?.communityCards?.[i] ?? null} faceUp={!!state?.communityCards?.[i]} size="sm" />)}
+        </div>
+
+        {/* Pot */}
+        <div style={{ position: 'absolute', top: '70%', left: '50%', transform: 'translateX(-50%)', textAlign: 'center', color: '#ffd966' }}>
+          <div style={{ fontSize: '0.9rem', fontWeight: 'bold', textShadow: '0 2px 4px #000' }}>底池: {state?.totalPot ?? 0}</div>
+          <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)' }}>{state ? STAGE_LABELS[state.stage] ?? state.stage : ''}</div>
+        </div>
+
+        {/* Player */}
+        <div style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)' }}>
+          <PlayerTag name={me?.name ?? '你'} stack={me?.stack ?? 0} inChips={me?.inChips ?? 0} folded={me?.folded ?? false} allIn={me?.allIn ?? false} active={isPlayerTurn} size="md" />
+        </div>
+      </div>
+
+      {/* Hole cards */}
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: -8 }}>
+        {myHoleCards.map((c, i) => <PokerCard key={i} card={c} faceUp={!!c} size="md" highlight={isPlayerTurn} />)}
+        {(!me?.holeCards) && <div style={{ color: '#888', fontSize: '0.85rem', alignSelf: 'center' }}>等待发牌</div>}
+      </div>
+
+      <ActionBar legalIds={legalIds} isPlayerTurn={isPlayerTurn} isHandOver={isHandOver} callLabel={callLabel} onAction={handleAction} onRestart={handleRestart} onBack={onBack} />
 
       {/* Messages */}
-      <div style={{ position: 'absolute', bottom: 50, left: 10, right: 10, maxHeight: 60, overflow: 'hidden' }}>
-        {messages.map((m, i) => (
-          <div key={i} style={{ color: '#ddd', fontSize: 12, textShadow: '0 1px 2px #000' }}>{m}</div>
-        ))}
+      <div style={{ width: '100%', maxWidth: 800, display: 'flex', gap: 8, padding: '4px 12px', minHeight: 24, fontSize: '0.82rem', color: '#ccc' }}>
+        {messages.slice(-3).map((m, i) => <span key={i} style={{ color: '#bbb' }}>{m}</span>)}
       </div>
+
+      {/* Chat */}
+      <div style={{ width: '100%', maxWidth: 800 }}>
+        <ChatPanel messages={chat} onSend={handleSendChat} myName={auth.username || '你'} maxHeight={180} />
+      </div>
+
+      {/* Result modal */}
+      <Modal open={showResult && !!lastResult} title={lastResult?.winner === 'player' ? '🎉 胜利' : '💔 失败'} onClose={() => setShowResult(false)}
+        buttons={[
+          { label: '继续', onClick: () => setShowResult(false), variant: 'primary' },
+          { label: '下一局', onClick: () => { setShowResult(false); send('restart', {}); }, variant: 'secondary' },
+          { label: '返回', onClick: onBack, variant: 'danger' },
+        ]}>
+        {lastResult && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ fontSize: '1.1rem', textAlign: 'center', color: lastResult.winner === 'player' ? '#7fd4ff' : '#e34234' }}>
+              {lastResult.winner === 'player' ? '你赢得了这手牌！' : '本手牌失败，下次加油！'}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: 12, background: 'rgba(0,0,0,0.3)', borderRadius: 8 }}>
+              <Stat label="底池" value={lastResult.pot} />
+              {lastResult.gameTokens !== undefined && <Stat label="游戏币余额" value={lastResult.gameTokens} highlight />}
+              {lastResult.payoffs?.[0] !== undefined && <Stat label="本手盈亏" value={lastResult.payoffs[0]} highlight={lastResult.payoffs[0] >= 0} negative={lastResult.payoffs[0] < 0} />}
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
 
-function ABtn({ label, color, disabled, onClick }: { label: string; color: string; disabled: boolean; onClick: () => void }) {
+function Stat({ label, value, highlight, negative }: { label: string; value: number; highlight?: boolean; negative?: boolean }) {
   return (
-    <button onClick={onClick} disabled={disabled} style={{
-      background: color, border: 'none', color: '#fff', padding: '6px 14px', borderRadius: 20,
-      fontWeight: 'bold', fontSize: 13, cursor: disabled ? 'not-allowed' : 'pointer',
-      opacity: disabled ? 0.4 : 1,
-    }}>{label}</button>
+    <div>
+      <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: negative ? '#e34234' : (highlight ? '#7fd4ff' : '#ffd966') }}>{value}</div>
+    </div>
   );
-}
-
-function drawCard(ctx: CanvasRenderingContext2D, x: number, y: number, card: { rank: string; suit: string } | null, faceUp: boolean) {
-  const w = 44, h = 62, r = 5;
-  ctx.save();
-  ctx.beginPath();
-  roundRect(ctx, x - w / 2, y - h / 2, w, h, r);
-  ctx.clip();
-  if (!faceUp || !card) {
-    ctx.fillStyle = '#2c3e66';
-    ctx.fillRect(x - w / 2, y - h / 2, w, h);
-    for (let i = 0; i < 6; i++) ctx.fillRect(x - w / 2, y - h / 2 + i * 12, w, 6);
-  } else {
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(x - w / 2, y - h / 2, w, h);
-    ctx.fillStyle = cardColor(card);
-    ctx.font = 'bold 14px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(cardStr(card), x, y + 4);
-    ctx.font = '10px sans-serif';
-    ctx.fillText(cardStr(card), x - 14, y - h / 2 + 14);
-    ctx.fillText(cardStr(card), x + 14, y + h / 2 - 4);
-  }
-  ctx.restore();
-}
-
-function drawPlayer(ctx: CanvasRenderingContext2D, x: number, y: number, stack: number, name: string, active: boolean) {
-  ctx.fillStyle = active ? '#ffd966' : '#ccc';
-  ctx.font = 'bold 14px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(`${name}  ${stack}`, x, y);
-}
-
-function stageLabel(s: string): string {
-  const m: Record<string, string> = { preflop: '翻牌前', flop: '翻牌', turn: '转牌', river: '河牌', showdown: '摊牌' };
-  return m[s] ?? s;
 }

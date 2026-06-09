@@ -1,7 +1,14 @@
 /**
- * AI 启发式决策引擎 — TypeScript 移植
+ * AI 启发式决策引擎 — 保守化重写
  *
- * 决策公式: score = 0.4*strength + 0.3*odds + 0.2*position + 0.1*bluff - stress_penalty + noise
+ * 决策分层：
+ * - 烂牌 (< 0.25): fold 优先
+ * - 弱牌 (0.25-0.4): call/check
+ * - 中牌 (0.4-0.6): 50% call, 40% raise_half, 10% raise_pot
+ * - 强牌 (0.6-0.8): raise_pot 优先
+ * - 超强牌 (> 0.8): all_in
+ *
+ * 配合 persona.style (tight/balanced/loose) 调整阈值。
  */
 
 import type { AIPersona } from './persona.js';
@@ -21,7 +28,7 @@ function gaussianNoise(sigma: number): number {
 
 function calcPotOdds(callAmt: number, potAfter: number): number {
   if (potAfter <= 0) return 0;
-  return callAmt / potAfter;
+  return Math.min(1, callAmt / potAfter);
 }
 
 function calcPositionBonus(seat: number, dealer: number, numPlayers: number): number {
@@ -44,22 +51,25 @@ function calcCallAmount(state: GameState, seat: number): number {
   for (const p of state.players) {
     if (p.seat !== seat) {
       const diff = p.inChips - myP.inChips;
-      if (diff > 0) amt = diff;
+      if (diff > 0) amt = Math.max(amt, diff);
     }
   }
   return amt;
 }
 
-function actionScore(
-  hStrength: number, potOdds: number, posBonus: number,
-  activeOpp: number, bluffTend: number, stress: number, noise: number,
-): number {
-  const adjusted = hStrength / (1 + 0.2 * Math.max(0, activeOpp - 1));
-  const oddsFactor = potOdds < 1 ? (1 - potOdds) : 0;
-  const bluffBonus = bluffTend * (1 - adjusted) * 0.5;
-  const stressPenalty = (stress / 100) * 0.3;
-  return 0.4 * adjusted + 0.3 * oddsFactor + 0.2 * posBonus + 0.1 * bluffBonus - stressPenalty + gaussianNoise(noise);
+type Style = 'tight' | 'balanced' | 'loose';
+
+function getStyle(ai: AIPersona): Style {
+  if (ai.bluffFrequency < 0.12) return 'tight';
+  if (ai.bluffFrequency > 0.20) return 'loose';
+  return 'balanced';
 }
+
+const STYLE_THRESHOLDS: Record<Style, { fold: number; raise: number; allin: number }> = {
+  tight:    { fold: 0.32, raise: 0.55, allin: 0.82 },
+  balanced: { fold: 0.22, raise: 0.45, allin: 0.75 },
+  loose:    { fold: 0.14, raise: 0.35, allin: 0.65 },
+};
 
 export function decideAction(
   state: GameState, ai: AIPersona, aiSeat: number,
@@ -89,32 +99,68 @@ export function decideAction(
   const complexity = calcComplexity(activeOpp, stage);
   const thinkTime = ai.effectiveThinkTime(complexity);
 
-  // Tilt check
-  if (isTilted(ai, stressCfg)) {
-    const tiltActions = legalIds.filter(id => [0, 1, 3, 4].includes(id));
-    if (tiltActions.length > 0) {
-      return { actionId: tiltActions[Math.floor(Math.random() * tiltActions.length)]! as ActionId, thinkTime };
+  const style = getStyle(ai);
+  const th = STYLE_THRESHOLDS[style];
+
+  // Tilt: 当 AI 处于压力/上头状态，倾向激进
+  const tiltBoost = isTilted(ai, stressCfg) ? 0.08 : 0;
+
+  const effectiveFold = Math.max(0, th.fold - tiltBoost);
+  const effectiveRaise = Math.max(0, th.raise - tiltBoost);
+  const effectiveAllIn = Math.max(0, th.allin - tiltBoost);
+
+  // 位置加成（坐庄位更激进）
+  const posBoost = (posBonus - 0.10) * 0.3;
+  // 锅赔率加成（对手加注大 → fold 倾向增加）
+  const foldOddsPressure = potOdds > 0.5 ? (potOdds - 0.5) * 0.5 : 0;
+  // 噪音
+  const noise = ai.effectiveNoise() * 0.4;
+
+  const scores: Record<number, number> = {};
+  for (const aid of legalIds) {
+    let s = 0;
+    if (aid === 0) {
+      // fold: 烂牌 + 锅赔率大 + 多人
+      s = (1 - hStrength) * 1.2
+        + foldOddsPressure
+        + activeOpp * 0.05
+        + posBoost
+        + noise;
+    } else if (aid === 1) {
+      // call/check: 中等牌 + 锅赔率合理
+      const callScore = hStrength * 0.8 - potOdds * 0.4 + posBoost;
+      // 烂牌不轻易跟注
+      s = callScore * (hStrength < effectiveFold ? 0.3 : 1) + noise;
+    } else if (aid === 2) {
+      // raise half pot: 中牌可半诈唬
+      s = hStrength * 1.0 + posBoost * 0.5 - 0.1 + noise;
+    } else if (aid === 3) {
+      // raise pot: 强牌
+      s = hStrength * 1.4 + posBoost * 0.7 + 0.1 + noise;
+    } else if (aid === 4) {
+      // all in: 超强牌
+      s = hStrength * 1.6 + posBoost + 0.2 + noise;
     }
+    // 阈值门控：raise/all_in 需要牌力
+    if ((aid === 2 || aid === 3) && hStrength < effectiveRaise * 0.5) s -= 0.5;
+    if (aid === 4 && hStrength < effectiveAllIn * 0.6) s -= 1.0;
+    // 烂牌不能 raise
+    if (hStrength < effectiveFold && (aid === 2 || aid === 3 || aid === 4)) s -= 1.0;
+    scores[aid] = s;
   }
 
-  const effectiveBluff = ai.bluffFrequency;
-  const noise = ai.effectiveNoise();
-
+  // 选最高分
   let bestAction: ActionId = 1;
   let bestScore = -Infinity;
-
   for (const aid of legalIds) {
-    let score: number;
-    switch (aid) {
-      case 0: score = actionScore(hStrength, potOdds, posBonus + 0.1, activeOpp, effectiveBluff, ai.stress, noise) - 0.2; break;
-      case 1: score = actionScore(hStrength, potOdds, posBonus, activeOpp, effectiveBluff, ai.stress, noise); break;
-      case 2: score = actionScore(hStrength, potOdds, posBonus + 0.15, activeOpp, effectiveBluff, ai.stress, noise) - (hStrength < 0.3 ? 0.15 : 0); break;
-      case 3: score = actionScore(hStrength, potOdds, posBonus + 0.2, activeOpp, effectiveBluff, ai.stress, noise) - (hStrength < 0.3 ? 0.1 : 0); break;
-      case 4: score = actionScore(hStrength, potOdds, posBonus + 0.3, activeOpp, effectiveBluff, ai.stress, noise) - (hStrength < 0.6 ? 0.3 : 0); break;
-      default: score = 0;
+    if (scores[aid]! > bestScore) {
+      bestScore = scores[aid]!;
+      bestAction = aid;
     }
-    if (score > bestScore) { bestScore = score; bestAction = aid; }
   }
+
+  // Safety: 烂牌必须能 fold
+  if (hStrength < 0.15 && legalIds.includes(0)) bestAction = 0;
 
   return { actionId: bestAction, thinkTime };
 }

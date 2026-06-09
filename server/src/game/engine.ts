@@ -56,7 +56,7 @@ export class MultiPokerEngine {
   private minRaise: number;
 
   constructor(numPlayers: number, sb = 25, bb = 50, startStack = 2500) {
-    if (numPlayers < 2 || numPlayers > 6) throw new Error('numPlayers must be 2-6');
+    if (numPlayers < 2 || numPlayers > 10) throw new Error('numPlayers must be 2-10');
     this.numPlayers = numPlayers;
     this.sb = sb;
     this.bb = bb;

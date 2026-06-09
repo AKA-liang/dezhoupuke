@@ -33,6 +33,52 @@ export interface GameState {
   aiChips?: number;
 }
 
+export interface HandResult {
+  winner: 'player' | 'ai';
+  pot: number;
+  playerChips?: number;
+  aiChips?: number;
+  payoffs?: number[];
+  gameTokens?: number;
+  bankrupt?: boolean;
+}
+
+export interface HandStart {
+  hand: number;
+  dealer: number;
+}
+
+export interface ChatMessage {
+  id: number;
+  name: string;
+  text: string;
+  isPlayer: boolean;
+  isSystem?: boolean;
+  timestamp: number;
+}
+
+export interface AuthPayload {
+  userId: string;
+  username: string;
+}
+
+export interface AuthResponse {
+  token: string;
+  username: string;
+  userId: string;
+  gameTokens: number;
+  points: number;
+  elo: number;
+}
+
+export interface MeResponse {
+  id: string;
+  username: string;
+  gameTokens: number;
+  points: number;
+  elo: number;
+}
+
 export interface WsMessage {
   type: string;
   [key: string]: unknown;

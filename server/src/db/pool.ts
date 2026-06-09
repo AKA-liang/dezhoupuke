@@ -20,11 +20,13 @@ export async function shutdown() {
 }
 
 let schemaRun = false;
+let schemaPromise: Promise<void> | null = null;
 
 export async function initSchema() {
   if (schemaRun) return;
-  schemaRun = true;
-  await pool.query(`
+  if (schemaPromise) return schemaPromise;
+  schemaPromise = (async () => {
+    await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE NOT NULL,
@@ -53,6 +55,13 @@ export async function initSchema() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `);
+    schemaRun = true;
+  })().catch((err) => {
+    console.error('[PG] Schema init failed:', err.message);
+    schemaPromise = null;
+    throw err;
+  });
+  await schemaPromise;
 }
 
 export function getPool() { return pool; }
